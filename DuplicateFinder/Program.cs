@@ -4,27 +4,64 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Threading.Tasks;
+
 
 namespace DuplicateFinder
 {
-    class Program
+    static class Program
     {
-        static HashAlgorithm _hashAlg = MD5.Create();
+        private static readonly object _obj = new object();
+        private static readonly List<List<string>> _sameFiles = new List<List<string>>();
 
-        static string GetFileHash(FileInfo file)
+        private static string GetFileHash(HashAlgorithm hashAlg, FileInfo file)
         {
             using (var fs = file.OpenRead())
             {
-                var hash = _hashAlg.ComputeHash(fs);
+                var hash = hashAlg.ComputeHash(fs);
 
                 return BitConverter.ToString(hash);
             }
         }
 
-        static void Main(string[] args)
+        private static void ProcessChunk(IGrouping<long, FileInfo> group)
         {
-            Console.Write("Enter directory path: ");
-            var path = Console.ReadLine();
+            var hashAlg = MD5.Create();
+
+            var files = group.Select(f => new
+            {
+                f.FullName,
+                Hash = GetFileHash(hashAlg, f)
+            }).ToList();
+
+            for (var i = 0; i < files.Count; i++)
+            {
+                List<string> curGroup;
+
+                lock (_obj)
+                {
+                    _sameFiles.Add(new List<string>());
+
+                    curGroup = _sameFiles.Last();
+                }
+
+                curGroup.Add(files[i].FullName);
+
+                for (var j = i + 1; j < files.Count; j++)
+                {
+                    if (files[i].Hash != files[j].Hash) continue;
+
+                    curGroup.Add(files[j].FullName);
+
+                    files.Remove(files[j]);
+                    j--;
+                }
+            }
+        }
+
+        private static void Main(string[] args)
+        {
+            var path = args.Length != 0 ? args[0] : Console.ReadLine();
 
             if (!Directory.Exists(path))
             {
@@ -39,40 +76,14 @@ namespace DuplicateFinder
 
             var groups = fileNames.Select(n => new FileInfo(n))
                                   .GroupBy(f => f.Length)
-                                  .Where(g => g.Count() > 1)
-                                  .ToList();
+                                  .Where(g => g.Skip(1).Any());
 
-            var sameFiles = new List<List<string>>();
-            foreach (var group in groups)
-            {
-                var files = group.Select(f => new
-                {
-                    f.FullName,
-                    Hash = GetFileHash(f)
-                }).ToList();
-
-                for (var i = 0; i < files.Count; i++)
-                {
-                    sameFiles.Add(new List<string>());
-                    sameFiles.Last().Add(files[i].FullName);
-
-                    for (var j = i + 1; j < files.Count; j++)
-                    {
-                        if (files[i].Hash != files[j].Hash) continue;
-
-                        sameFiles.Last().Add(files[j].FullName);
-
-                        files.Remove(files[j]);
-                        j--;
-                    }
-                }
-            }
+            Parallel.ForEach(groups, ProcessChunk);
 
             stopwatch.Stop();
 
-            foreach (var list in sameFiles.Where(g => g.Count > 1))
+            foreach (var list in _sameFiles.Where(g => g.Skip(1).Any()))
             {
-                Console.WriteLine("Same files:");
                 foreach (var filename in list)
                 {
                     Console.WriteLine(filename);
@@ -80,9 +91,8 @@ namespace DuplicateFinder
 
                 Console.WriteLine();
             }
-            
-            Console.WriteLine($"Time passed: {stopwatch.Elapsed}");
 
+            Console.WriteLine($"Time passed: {stopwatch.Elapsed}");
             Console.ReadKey();
         }
     }
