@@ -11,7 +11,6 @@ namespace DuplicateFinder
 {
     static class Program
     {
-        private static readonly object _obj = new object();
         private static readonly List<List<string>> _sameFiles = new List<List<string>>();
 
         private static string GetFileHash(HashAlgorithm hashAlg, FileInfo file)
@@ -36,16 +35,7 @@ namespace DuplicateFinder
 
             for (var i = 0; i < files.Count; i++)
             {
-                List<string> curGroup;
-
-                lock (_obj)
-                {
-                    _sameFiles.Add(new List<string>());
-
-                    curGroup = _sameFiles.Last();
-                }
-
-                curGroup.Add(files[i].FullName);
+                var curGroup = new List<string> { files[i].FullName };
 
                 for (var j = i + 1; j < files.Count; j++)
                 {
@@ -55,6 +45,11 @@ namespace DuplicateFinder
 
                     files.Remove(files[j]);
                     j--;
+                }
+
+                if (curGroup.Skip(1).Any())
+                {
+                    _sameFiles.Add(curGroup);
                 }
             }
         }
@@ -82,7 +77,7 @@ namespace DuplicateFinder
 
             stopwatch.Stop();
 
-            foreach (var list in _sameFiles.Where(g => g.Skip(1).Any()))
+            foreach (var list in _sameFiles)
             {
                 foreach (var filename in list)
                 {
